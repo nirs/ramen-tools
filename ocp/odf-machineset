@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""
+Usage:
+
+    # Build and inspect the yaml for the hub:
+    $ odf-machineset --role hub --context perf1
+    ...
+
+    # Apply the new machineset on the hub:
+    $ odf-machineset --role hub --context perf1 | oc apply -f- --context perf1
+
+    # Create machineset for managed cluster:
+    $ odf-machineset --context perf2 | oc apply -f- --context perf2
+
+This is an improved version of
+https://gist.github.com/mulbc/57e40abaef48ff01d6e257a2c54848b4
+
+Changes:
+
+- Better error handling
+- Use full name: machinesets.machine.openshift.io - otherwise we get
+  machinesets.cluster.x-k8s.io/v1beta1 on the hub
+- Label our machineset with "app.kubernetes.io/managed-by: odf"
+- Rename machineset to odf
+- Suupport creating a hub with less resources (--role hub)
+- Does not modify the clsuter, only create the new machineset yaml, to be
+  applied manually on the cluster.
+- The existing worker machineset should be scaled down manually before creating
+  the new one.
+"""
+
+import argparse
+import json
+import subprocess
+import yaml
+
+MACHINESET = "machinesets.machine.openshift.io"
+NAMESPACE = "openshift-machine-api"
+MANAGED_BY = "app.kubernetes.io/managed-by"
+MANAGER = "odf"
+
+ROLES = {
+    "cluster": {
+        "numCPUs": 16,
+        "memoryMiB": 61036,
+    },
+    "hub": {
+        "numCPUs": 8,
+        "memoryMiB": 16384,
+    },
+}
+
+
+def find_worker_machineset(args):
+    cmd = [
+        "oc",
+        "get",
+        MACHINESET,
+        f"--selector={MANAGED_BY}!={MANAGER}",
+        f"--namespace={NAMESPACE}",
+        "--output=json",
+    ]
+    if args.context:
+        cmd.append(f"--context={args.context}")
+    if args.kubeconfig:
+        cmd.append(f"--kubeconfig={args.kubeconfig}")
+
+    cp = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
+    r = json.loads(cp.stdout.decode())
+
+    # Unmanaged machineset set may be created by legacy scripts. If we already
+    # have one we should not managed this cluster.
+    unmanaged = [
+        ms["metadata"]["name"]
+        for ms in r["items"]
+        if "-worker-" not in ms["metadata"]["name"]
+    ]
+    if unmanaged:
+        raise RuntimeError(f"Unmanaged machinesets: {unmanaged}")
+
+    # If we have multiple machinesets the user need to handle this cluster
+    # manually.
+    workers = [ms for ms in r["items"] if "-worker-" in ms["metadata"]["name"]]
+    if len(workers) > 1:
+        names = [ms["metadata"]["name"] for ms in workers]
+        raise RuntimeError(f"Multiple worker machinesets: {names}")
+
+    # We must have one worker machinesset since we use it as a template for new
+    # machine set.
+    if not workers:
+        raise RuntimeError(f"No worker machinesets")
+
+    return workers[0]
+
+
+p = argparse.ArgumentParser()
+p.add_argument("--context", help="cluster context")
+p.add_argument("--kubeconfig", help="cluster kubeconfig")
+p.add_argument(
+    "--role",
+    choices=["cluster", "hub"],
+    default="cluster",
+    help="cluster role",
+)
+args = p.parse_args()
+
+old = find_worker_machineset(args)
+
+new_name = old["metadata"]["name"].replace("worker", "odf")
+
+new = {
+    "apiVersion": old["apiVersion"],
+    "kind": old["kind"],
+    "metadata": {
+        "annotations": old["metadata"].get("annotations", {}),
+        "labels": old["metadata"].get("labels", {}),
+        "namespace": old["metadata"]["namespace"],
+        "name": new_name,
+    },
+    "spec": old["spec"],
+}
+
+new["metadata"]["labels"][MANAGED_BY] = MANAGER
+new["spec"]["replicas"] = 3
+
+match_labels = new["spec"]["selector"]["matchLabels"]
+match_labels["machine.openshift.io/cluster-api-machineset"] = new_name
+
+labels = new["spec"]["template"]["metadata"]["labels"]
+labels["machine.openshift.io/cluster-api-machineset"] = new_name
+labels["cluster.ocs.openshift.io/openshift-storage"] = ""
+
+provider_spec = new["spec"]["template"]["spec"]["providerSpec"]["value"]
+provider_spec["numCPUs"] = ROLES[args.role]["numCPUs"]
+provider_spec["memoryMiB"] = ROLES[args.role]["memoryMiB"]
+
+print(yaml.dump(new).rstrip())
