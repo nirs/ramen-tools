@@ -1,0 +1,27 @@
+# Minimal storage cluster
+
+---
+apiVersion: ocs.openshift.io/v1
+kind: StorageCluster
+metadata:
+  name: ocs-storagecluster
+  namespace: openshift-storage
+  annotations:
+    ocs.openshift.io/clusterIsDisasterRecoveryTarget: "true"
+spec:
+  flexibleScaling: true
+  monDataDirHostPath: /var/lib/rook
+  storageDeviceSets:
+  - count: 1
+    dataPVCTemplate:
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: "100Gi"
+        storageClassName: thin-csi
+        volumeMode: Block
+    name: ocs-deviceset
+    portable: true
+    replica: 3
