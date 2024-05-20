@@ -1,0 +1,6 @@
+---
+namespace: openshift-gitops
+resources:
+  - managedclustersetbinding.yaml
+  - placement.yaml
+  - gitopscluster.yaml

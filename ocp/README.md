@@ -64,3 +64,28 @@ $ oc wait storagecluster ocs-storagecluster -n openshift-storage \
     --for=jsonpath='{.status.phase}=Ready' --timeout 5m --context perf3
 storagecluster.ocs.openshift.io/ocs-storagecluster condition met
 ```
+
+## Installing gitops on the hub
+
+For creating application sets base applications, we need to install and
+configure the OpenShift GitOps operator on the hub.
+
+> [!NOTE]
+> This allows only push mode. For pull mode we need more instructions.
+
+Install the Red Hat OpenShift GitOps operator on the hub accepting defaults.
+
+Register the managed clusters to gitops:
+
+```
+$ oc apply -k gitops/ --context perf1
+gitopscluster.apps.open-cluster-management.io/dr-gitops created
+placement.cluster.open-cluster-management.io/all-openshift-clusters created
+managedclustersetbinding.cluster.open-cluster-management.io/dr created
+```
+
+To verify gitops deployment check the Cluster Argo CD console at:
+https://{cluster-url}/settings/clusters
+
+For more info see
+[Red Hat OpenShift GitOps release notes](https://access.redhat.com/documentation/en-us/openshift_container_platform/4.12/html/cicd/gitops).
