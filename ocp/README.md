@@ -84,7 +84,18 @@ placement.cluster.open-cluster-management.io/all-openshift-clusters created
 managedclustersetbinding.cluster.open-cluster-management.io/dr created
 ```
 
-To verify gitops deployment check the Cluster Argo CD console at:
+Checking gitops status:
+
+```
+$ oc get gitopscluster dr-gitops -n openshift-gitops --context perf1 -o jsonpath='{.status}' | jq
+{
+  "lastUpdateTime": "2024-05-20T11:15:59Z",
+  "message": "Added managed clusters [perf2 perf3] to gitops namespace openshift-gitops",
+  "phase": "successful"
+}
+```
+
+To verify gitops deployment check the cluster Argo CD console at:
 https://{cluster-url}/settings/clusters
 
 For more info see
