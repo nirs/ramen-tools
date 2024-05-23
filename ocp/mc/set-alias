@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+# Set mc alias for cluster
+
+import argparse
+import base64
+import json
+import logging
+import subprocess
+
+import yaml
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("context", help="hub context")
+    p.add_argument(
+        "--insecure",
+        action="store_true",
+        help="disable SSL certificate verification",
+    )
+    p.add_argument("-v", "--verbose", action="store_true", help="be more verbose")
+    args = p.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+
+    ramen_config = get_ramen_config(args.context)
+    logging.debug("Got ramen config %s", yaml.dump(ramen_config))
+
+    for s3_profile in ramen_config["s3StoreProfiles"]:
+        secret = get_s3_secret(args.context, s3_profile["s3SecretRef"]["name"])
+        logging.debug("Got secret %s", yaml.dump(secret))
+
+        set_alias(s3_profile, secret, insecure=args.insecure)
+
+
+def get_ramen_config(context):
+    cmd = [
+        "oc",
+        "get",
+        "configmap/ramen-hub-operator-config",
+        "--namespace=openshift-operators",
+        "--output=json",
+        f"--context={context}",
+    ]
+    logging.debug("Running %s", cmd)
+    cp = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
+    configmap = json.loads(cp.stdout)
+    return yaml.safe_load(configmap["data"]["ramen_manager_config.yaml"])
+
+
+def get_s3_secret(context, name):
+    cmd = [
+        "oc",
+        "get",
+        "secret",
+        name,
+        "--namespace=openshift-operators",
+        "--output=json",
+        f"--context={context}",
+    ]
+    logging.debug("Running %s", cmd)
+    cp = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
+    return json.loads(cp.stdout)
+
+
+def decode_key(s):
+    return base64.b64decode(s).decode()
+
+
+def shorten(s3_profile_name):
+    return s3_profile_name.replace("s3profile-", "").replace("-ocs-storagecluster", "")
+
+
+def set_alias(s3_profile, secret, insecure=False):
+    alias = shorten(s3_profile["s3ProfileName"])
+    url = s3_profile["s3CompatibleEndpoint"]
+    access_key = decode_key(secret["data"]["AWS_ACCESS_KEY_ID"])
+    secret_key = decode_key(secret["data"]["AWS_SECRET_ACCESS_KEY"])
+
+    cmd = ["mc", "alias", "set", alias, url, access_key, secret_key]
+    if insecure:
+        cmd.append("--insecure")
+
+    logging.debug("Running %s", cmd)
+    subprocess.run(cmd, check=True)
+
+
+if __name__ == "__main__":
+    main()
